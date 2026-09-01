@@ -13,9 +13,9 @@ Remove any references to `@devvit/public-api` and `@devvit/protos` from your pac
 
 Install `@devvit/start` and `@devvit/web` pinned to the latest version.
 
-Add `@hono/node-server`, using ^ notation.
+Add `hono` and `@hono/node-server`, both using ^ notation.
 
-In Dev Dependencies, add `@types/node` (using ^ notation), `devvit` (pinned to the latest version) and `vite` (using ^ notation).
+In Dev Dependencies, add `@types/node` (using ^ notation), `devvit` (pinned to the latest version) and `vite` (pinned to `^7.3.5` or higher — `@devvit/start` has a peer requirement of `vite>=7.3.5`).
 
 # Step 2 - set up tsconfig and vite
 
@@ -66,7 +66,7 @@ Create a tools folder, and inside create the following files:
 }
 ```
 
-## tools/tsconfig/server.json
+## tools/tsconfig.server.json
 
 ```json
 {
@@ -84,7 +84,7 @@ Create a tools folder, and inside create the following files:
 }
 ```
 
-## tools/tsconfig/vite.json
+## tools/tsconfig.vite.json
 
 ```json
 {
@@ -117,17 +117,17 @@ Inside the `src` folder, create the following structure:
 
 ```
 src/
-├── index.ts
 ├── server/
 │   └── core/
+│   └── forms/
+│   └── menus/
 │   └── tasks/
 │   └── triggers/
 │   └── validators/
 │   └── index.ts
-└── client/
 ```
 
-The index.ts file should have the following basic structure:
+The index.ts file in `src/server` should have the following basic structure:
 
 ```ts
 import { Hono } from "hono";
@@ -151,9 +151,76 @@ const port = getServerPort();
 server.listen(port);
 ```
 
-# Step 4 - Implement trigger and job logic
+The devvit.json file should use the `web` key instead of `blocks`, with an `entry` pointing to `src/index.ts`, plus `triggers` and `schedulerJobs` maps. Each map key is the event/job name and the value is the HTTP route path that the Hono server handles:
+
+```json
+{
+    "$schema": "https://developers.reddit.com/schema/config-file.v1.json",
+    "name": "your-app-name",
+    "permissions": {
+        "reddit": true
+    },
+    "scripts": {
+        "build": "vite build",
+        "dev": "vite build --watch"
+    },
+    "server": {
+        "dir": "dist/server",
+        "entry": "index.cjs"
+    },
+    "triggers": {
+        "onAppInstall": "/internal/triggers/on-app-install",
+        "onAppUpgrade": "/internal/triggers/on-app-upgrade",
+        "onModAction": "/internal/triggers/on-mod-action"
+    },
+    "scheduler": {
+        "tasks": {
+            "myJob": "/internal/tasks/my-job"
+        }
+    },
+    "menu": {
+        "items": [
+            {
+                "label": "Submit Leaderboard Post",
+                "forUserType": "moderator",
+                "location": "subreddit",
+                "endpoint": "/internal/menu/submit-leaderboard-post"
+            }
+        ]
+    },
+    "forms": {
+        "manualSetPointsForm": "/internal/form/set-score-manually"
+    },    
+    "settings": {
+        "subreddit": {
+            "rules": {
+                "type": "paragraph",
+                "label": "Automod Neo Rules",
+                "helpText": "Paste or enter YAML rules here. Most existing AutoModerator rules will work without modification.",
+                "validationEndpoint": "/internal/validators/validate-automod-setting"
+            }
+        },
+        "app": {
+            "someAppScopedSetting": {
+                "type": "string",
+                "label": "Some App Setting",
+                "helpText": "Enter the value for some app setting.",
+                "validationEndpoint": "/internal/validators/validate-app-setting"
+            }
+        }
+    }
+}
+```
+
+# Step 4 - Migrate permissions
+
+If there is a call to Devvit.configure() in main.ts, add equivalent permissions to the `permissions` section of devvit.json.
+
+# Step 5 - Implement trigger and job logic
 
 For each trigger and scheduled job in main.ts, create a file under either triggers/ or tasks/ in the server folder.
+
+Trigger request types (e.g. `OnPostUpdateRequest`, `OnModActionRequest`, `OnAppInstallRequest`) and `TriggerResponse` are exported from `@devvit/web/shared`. If a trigger handler does not need the request body, there is no need to read it.
 
 For example, if a trigger is defined currently as:
 
@@ -175,16 +242,14 @@ Devvit.addTrigger({
 });
 ```
 
-
 This would be replaced with an onPostUpdate trigger in the triggers/ folder, for example:
 
 ```ts
 // src/server/triggers/onPostUpdate.ts
-import { OnPostUpdateRequest, TriggerResponse } from "@devvit/web/shared";
-import { Context } from "hono";
+import type { OnPostUpdateRequest, TriggerResponse } from "@devvit/web/shared";
+import type { Context } from "hono";
 
 export const handlePostUpdate = async (c: Context) => {
-    const now = Date.now();
     const request = await c.req.json<OnPostUpdateRequest>();
 
     // Do work that is in the directly referenced function, or the body
@@ -193,31 +258,198 @@ export const handlePostUpdate = async (c: Context) => {
 };
 ```
 
-Triggers, tasks etc. should be referenced in devvit.json, and appropriate routing code added to the root index.json. E.g.
+For scheduled jobs, use `TaskRequest<T>` and `TaskResponse` which are exported from `@devvit/web/server`. The generic type parameter `T` is the shape of the job's `data` field:
+
+```ts
+// src/server/tasks/myJob.ts
+import type { TaskRequest, TaskResponse } from "@devvit/web/server";
+import type { Context } from "hono";
+
+export const handleMyJob = async (c: Context) => {
+    const request = await c.req.json<TaskRequest<{ someParam?: string } | undefined>>();
+    const someParam = request.data?.someParam;
+
+    // Do work
+
+    return c.json<TaskResponse>({ message: "job handled" }, 200);
+};
+```
+
+Triggers, tasks etc. should be referenced in devvit.json (under the `web.triggers` and `web.schedulerJobs` maps), and appropriate routing code added to `src/index.ts`. E.g.
 
 ```json
 "triggers": {
     "onPostUpdate": "/internal/triggers/on-post-update"
 },
+"schedulerJobs": {
+    "myJob": {
+        "endpoint": "/internal/tasks/my-job"
+    },
+    "myCronJob": {
+        "endpoint": "/internal/tasks/my-cron-job",
+        "cron": "0 0 * * *"
+    }
+}
 ```
 
-and 
+and
 
 ```ts
 // Triggers
 application.post("/internal/triggers/on-post-update", handlePostUpdate);
+
+// Scheduler jobs
+application.post("/internal/tasks/my-job", handleMyJob);
 ```
 
-# Step 4 - Move utility code
+Where a job is scheduled to a fixed cron in an appInstall handler, define the cron inside devvit.json rather than using manual scheduling code. If a cron is defined dymanically at runtime (e.g. using a random factor), do not define a cron inside devvit.json but instead use an onAppInstall/onAppUpgrade trigger as before.
 
-All  utility code should be moved into the `core/` folder. Keep the basic code structure including subfolders intact.
+# Step 6 - Migrate menu item code
+
+For each instance of Devvit.addMenuItem in main.ts, create a file within the `src/server/menus` folder. 
+
+Example code: 
+
+```ts
+import { MenuItemRequest, UiResponse, T1 } from "@devvit/web/shared";
+import type { Context } from "hono";
+
+export const handleSetScoreManuallyMenu = async (c: Context) => {
+    const menuRequest = await c.req.json<MenuItemRequest>();
+
+    // Do something
+
+    return c.json<UiResponse>({
+        showToast: "Action completed.",
+    });
+};
+```
+
+If you need to show a form, return a `UiResponse` with a `showForm` field instead of `showToast` e.g.:
+
+```ts
+return c.json<UiResponse>({
+    showForm: {
+        name: "manualSetPointsForm",
+        form: {
+            title: `Manually set points for ${comment.authorName}`,
+            fields: [
+                {
+                    name: "newScore",
+                    type: "number",
+                    defaultValue: currentScore.score,
+                    label: `Enter a new score for ${comment.authorName}`,
+                    helpText: "Warning: This will overwrite the score that currently exists",
+                    required: true,
+                },
+            ],
+        },
+    },
+});
+```
+
+Wire the menu item handlers in `src/server/index.ts` and devvit.json by adding routes for each handler. For example:
+
+```ts
+// Menus
+application.post("/internal/menu/submit-leaderboard-post", handleSubmitLeaderboardPostMenu);
+```
+
+# Step 7 - Form handlers
+
+For each form declared in main.ts, you need to create a file in the `src/server/forms` folder to handle that form, and wire it in `src/server/index.ts` and devvit.json similarly to menu items, triggers and tasks. Declare an interface that matches the form structure for type safety. Example code:
+
+```ts
+interface SetScoreManuallyFormValues {
+    newScore: number;
+}
+
+export const handleSetScoreManuallyForm = async (c: Context) => {
+    const { newScore } = await c.req.json<SetScoreManuallyFormValues>();
+    if (!context.commentId) {
+        return c.json<UiResponse>({
+            showToast: "No comment selected.",
+        });
+    }
+
+    // Do something with the new score
+    return c.json<UiResponse>({
+        showToast: "Score updated successfully.",
+    });
+};
+```    
+
+# Step 8 - Migrate settings defined in main.ts
+
+Settings should be migrated from the old context-based approach to the new `settings` service from `@devvit/web/server`.
+
+Look for calls to `Devvit.addSettings()` in main.ts and migrate them to devvit.json, preserving the grouping structure if any exists. Use the same names as the scheduled job names for the keys in the JSON file.
+
+Any validation code in the original Devvit.addSettings call should be moved to new validation endpoints in the `src/server/validators` folder. Example settings validator:
+
+```ts
+import { SettingsValidationRequest, SettingsValidationResponse } from "@devvit/web/shared";
+import { Context } from "hono";
+import { parseWebhookUrl } from "../core";
+
+export const validateDiscordOrSlackWebhook = async (c: Context) => {
+    const validationRequest = await c.req.json<SettingsValidationRequest<string>>();
+
+    if (!validationRequest.value) {
+        return c.json<SettingsValidationResponse>({
+            success: true,
+        });
+    }
+
+    if (!parseWebhookUrl(validationRequest.value)) {
+        return c.json<SettingsValidationResponse>({
+            success: false,
+            error: "Invalid Discord or Slack webhook URL format.",
+        });
+    }
+
+    return c.json<SettingsValidationResponse>({ success: true }, 200);
+};
+```
+
+# Step 9 - Move utility code
+
+All utility code should be moved into the `core/` folder. Keep the basic code structure including subfolders intact.
 
 Export all utility functions from the `core/` folder into each folder's root index.ts file to make them easily accessible throughout the project without creating excessive imports.
 
-# Step 5 - Change references to @devvit/public-api
+# Step 10 - Change references to @devvit/public-api
 
-All references to TriggerContext/JobContext/Context should be removed and replaced with an import to the sub-classes from the BaseContext.
+All references to `TriggerContext`/`JobContext`/`Context` should be removed and replaced with direct service imports from `@devvit/web/server`.
 
-E.g. `context.redis.get` becomes `redis.get` with a direct import from @devvit/web/server, and `context.reddit.getPostById` becomes `reddit.getPostById` with a direct import from @devvit/web/server.
+For example, `context.redis.get` becomes `redis.get` with `import { redis } from "@devvit/web/server"`, and `context.reddit.getPostById` becomes `reddit.getPostById` with `import { reddit } from "@devvit/web/server"`.
+
+The available services exported from `@devvit/web/server` include: `redis`, `reddit`, `scheduler`, `settings`, `realtime`, `media`, `notifications`, `payments`, `cache`.
+
+**`subredditName` is not a direct named export.** Access it via the request context proxy: `import { context } from "@devvit/web/server"` and use `context.subredditName`. The `context` object also exposes `context.appVersion`, `context.appSlug`, `context.userId`, `postId`, `commentId`, and other fields from `BaseContext`.
+
+**Reddit ID type guards:** `isCommentId`/`isLinkId` from `@devvit/public-api/types/tid.js` are replaced by `isT1`/`isT3` from `@devvit/web/shared`. These are proper TypeScript type predicates (`id is T1`, `id is T3`) and should be used for narrowing when calling methods like `reddit.remove(id, isSpam)` that require branded ID types.
+
+**Third-party packages built against `@devvit/public-api`:** Any helper libraries that import from `@devvit/public-api` (e.g. packages that accept `RedditAPIClient` or `RedisClient` from the old API) will not be type-compatible with the new service objects. Remove these from `package.json` and replace their functionality inline using the new `reddit`/`redis` imports. In particular:
+
+* `devvit-helpers` imports from @devvit/public-api. Remove it from `package.json` and replace its functionality using the new `reddit`/`redis` service objects.
+* `@fsvreddit/fsv-devvit-helpers` can be replaced with `@fsvreddit/fsv-devvit-web-helpers in most cases. If an identically named function exists (just without passing in a Context or RedisAPIClient), use it. Otherwise replace functionality inline.
 
 Remove any references to the old context objects or their subclasses from function parameters including code that calls them.
+
+# Step 11 - Add scripts to package.json
+
+Add the following scripts if they do not yet exist:
+
+```json
+  "scripts": {
+    "build": "vite build",
+    "deploy": "npm run type-check && npm run lint && npm run test && devvit upload",
+    "dev": "devvit playtest",
+    "launch": "npm run deploy && devvit publish",
+    "lint": "eslint \"src/**/*.{ts,tsx}\"",
+    "login": "devvit login",
+    "test": "vitest run --config vitest.config.ts",
+    "type-check": "tsc --build"
+  },
+```
