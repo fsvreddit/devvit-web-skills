@@ -151,7 +151,7 @@ const port = getServerPort();
 server.listen(port);
 ```
 
-The devvit.json file should use the `web` key instead of `blocks`, with an `entry` pointing to `src/index.ts`, plus `triggers` and `schedulerJobs` maps. Each map key is the event/job name and the value is the HTTP route path that the Hono server handles:
+The devvit.json file should use top level keys instead of `blocks`, example below:
 
 ```json
 {
@@ -305,6 +305,8 @@ application.post("/internal/tasks/my-job", handleMyJob);
 ```
 
 Where a job is scheduled to a fixed cron in an appInstall handler, define the cron inside devvit.json rather than using manual scheduling code. If a cron is defined dymanically at runtime (e.g. using a random factor), do not define a cron inside devvit.json but instead use an onAppInstall/onAppUpgrade trigger as before.
+
+If there are more than one Devvit.addTrigger that implements the same trigger point, you need to implement **only one** trigger, but have it call both things internally.
 
 # Step 6 - Migrate menu item code
 
