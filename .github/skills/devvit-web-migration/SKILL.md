@@ -275,19 +275,21 @@ export const handleMyJob = async (c: Context) => {
 };
 ```
 
-Triggers, tasks etc. should be referenced in devvit.json (under the `web.triggers` and `web.schedulerJobs` maps), and appropriate routing code added to `src/index.ts`. E.g.
+Triggers, tasks etc. should be referenced in devvit.json (under the `web.triggers` and `web.scheduler` maps), and appropriate routing code added to `src/index.ts`. E.g.
 
 ```json
 "triggers": {
     "onPostUpdate": "/internal/triggers/on-post-update"
 },
-"schedulerJobs": {
-    "myJob": {
-        "endpoint": "/internal/tasks/my-job"
-    },
-    "myCronJob": {
-        "endpoint": "/internal/tasks/my-cron-job",
-        "cron": "0 0 * * *"
+"scheduler": {
+    "tasks": {
+        "myJob": {
+            "endpoint": "/internal/tasks/my-job"
+        },
+        "myCronJob": {
+            "endpoint": "/internal/tasks/my-cron-job",
+            "cron": "0 0 * * *"
+        }
     }
 }
 ```
@@ -432,8 +434,8 @@ The available services exported from `@devvit/web/server` include: `redis`, `red
 
 **Third-party packages built against `@devvit/public-api`:** Any helper libraries that import from `@devvit/public-api` (e.g. packages that accept `RedditAPIClient` or `RedisClient` from the old API) will not be type-compatible with the new service objects. Remove these from `package.json` and replace their functionality inline using the new `reddit`/`redis` imports. In particular:
 
-* `devvit-helpers` imports from @devvit/public-api. Remove it from `package.json` and replace its functionality using the new `reddit`/`redis` service objects.
-* `@fsvreddit/fsv-devvit-helpers` can be replaced with `@fsvreddit/fsv-devvit-web-helpers in most cases. If an identically named function exists (just without passing in a Context or RedisAPIClient), use it. Otherwise replace functionality inline.
+* `devvit-helpers` imports from @devvit/public-api. Remove it from `package.json` and replace its functionality using the new `reddit`/`redis`/`scheduler` service objects.
+* `@fsvreddit/fsv-devvit-helpers` has equivalent functionality in `@fsvreddit/fsv-devvit-web-helpers` in most cases. If an identically named function exists in that package (just without passing in a Context or RedisAPIClient), use it. Otherwise replace functionality inline.
 
 Remove any references to the old context objects or their subclasses from function parameters including code that calls them.
 
