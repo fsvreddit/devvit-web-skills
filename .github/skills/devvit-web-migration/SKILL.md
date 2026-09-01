@@ -7,6 +7,8 @@ description: Migrates a singleton-style Devvit app to a Devvit Web app
 
 This skill migrates singleton-style Devvit apps to the Devvit Web platform, using Hono for routing.
 
+Tips - Make use of the @devvit/mcp MCP server for quick assistance understanding Devvit Web. Use `devvit_search` to quickly find relevant documentation and examples.
+
 # Step 1 - Set up dependencies
 
 Remove any references to `@devvit/public-api` and `@devvit/protos` from your package.json and code.
@@ -377,6 +379,7 @@ export const handleSetScoreManuallyForm = async (c: Context) => {
     }
 
     // Do something with the new score
+
     return c.json<UiResponse>({
         showToast: "Score updated successfully.",
     });
